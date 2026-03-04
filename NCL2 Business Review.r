@@ -23,11 +23,6 @@ library("patchwork")
 #Formatting and Standardising!
 ###########################################################################################################################################
 
-ncl2_oob <- read.csv("C:/Users/aboyadec/Documents/Business Review/oob.csv")
-ncl2_trb <- read.csv("C:/Users/aboyadec/Documents/Business Review/trb.csv")
-ncl2_late_slams <- read.csv("C:/Users/aboyadec/Documents/Business Review/late_slams.csv")
-ncl2_tso <- read.csv("C:/Users/aboyadec/Documents/Business Review/tso.csv")
-ncl2_oob_rc <- read.csv("C:/Users/aboyadec/Documents/Business Review/oob_root_cause.csv")
 
 colnames(ncl2_oob)
 colnames(ncl2_trb)
@@ -335,4 +330,5 @@ labs(
   y = 'Units',
   title = 'NCL2 TSO misses WoW'
 )
+
 ##################################################################################################################################################################
