@@ -1,0 +1,649 @@
+
+/*
+===================================================================================
+PIVOT TABLE SQL QUERY - OPERATIONAL METRICS ANALYSIS
+===================================================================================
+
+PURPOSE:
+This query creates a comprehensive pivot table that aggregates operational metrics
+across multiple dimensions (facilities, dates, regions) and organizes them into
+a hierarchical structure of categories, subcategories, and specific metrics.
+
+BUSINESS CONTEXT:
+The query analyzes operational performance across three main areas:
+1. Speed metrics (measured in basis points - bps)
+2. Quality metrics (measured in DPMO - Defects Per Million Opportunities)
+3. Cost metrics (measured in hours and percentages)
+
+KEY FEATURES:
+- Uses Common Table Expressions (CTEs) for modular, readable code
+- Implements FULL OUTER JOINs to preserve all data across different sources
+- Calculates basis points (bps) for performance metrics (1 bps = 0.01%)
+- Creates a flexible pivot structure that can be easily filtered and aggregated
+- Handles NULL values appropriately to avoid data loss
+
+INTERVIEW TALKING POINTS:
+- Demonstrates advanced SQL skills (CTEs, window functions, complex joins)
+- Shows understanding of data modeling and dimensional analysis
+- Illustrates performance optimization through proper indexing opportunities
+- Exhibits knowledge of business metrics and KPI calculations
+===================================================================================
+*/
+
+-- ===================================================================================
+-- SECTION 1: BASE DATA EXTRACTION
+-- ===================================================================================
+-- This section extracts raw volume data from the operational database
+-- INTERVIEW NOTE: Discuss importance of filtering early to reduce data volume
+
+WITH volume_data AS (
+    SELECT
+        facility_id,                                    -- Unique identifier for each facility
+        volume_metric,                                  -- Actual volume processed
+        EXTRACT(YEAR FROM DATE(metric_date)) AS year,   -- Extract year for time-based analysis
+        DATE(metric_date) AS metric_date,               -- Normalized date field
+        EXTRACT(WEEK FROM DATE(metric_date)) AS week_number  -- Week number for weekly aggregations
+    FROM "database"."schema"."fact_volume"
+    WHERE metric_date > '2024-12-31 00:00:00'          -- Filter to recent data only
+        AND volume_metric != 0                          -- Exclude zero-volume records
+        AND metric_type = 'type.category.subcategory'   -- Filter to specific metric type
+    ORDER BY facility_id DESC
+),
+
+-- ===================================================================================
+-- SECTION 2: DIMENSIONAL DATA (FACILITY INFORMATION)
+-- ===================================================================================
+-- This CTE enriches our data with facility attributes for grouping and filtering
+-- INTERVIEW NOTE: This is a classic star schema dimension table pattern
+
+facility_info AS (
+    SELECT
+        facility_id,        -- Primary key
+        facility_type,      -- Type classification (e.g., warehouse, distribution center)
+        region_code,        -- Geographic region identifier
+        country,            -- Country location
+        hub_id              -- Hub network identifier
+    FROM "database"."schema"."dim_facility"
+    WHERE hub_id IS NOT NULL  -- Only include facilities that are part of a hub network
+    GROUP BY facility_id, facility_type, region_code, country, hub_id
+    ORDER BY facility_id ASC
+),
+
+-- ===================================================================================
+-- SECTION 3: ENRICHED VOLUME DATA
+-- ===================================================================================
+-- Joins volume data with facility dimensions to enable multi-dimensional analysis
+-- INTERVIEW NOTE: LEFT JOIN preserves all volume records even if facility info is missing
+
+volume_enriched AS (
+    SELECT
+        v.facility_id,
+        v.metric_date AS date,
+        v.volume_metric,
+        v.year,
+        v.week_number,
+        f.facility_type,    -- Added from dimension table
+        f.region_code,      -- Added from dimension table
+        f.country,          -- Added from dimension table
+        f.hub_id            -- Added from dimension table
+    FROM volume_data v
+    LEFT JOIN facility_info f ON v.facility_id = f.facility_id
+    WHERE f.facility_type IS NOT NULL  -- Filter out records without facility type
+    ORDER BY v.facility_id ASC
+),
+
+-- ===================================================================================
+-- SECTION 4: VALUE SNAPSHOT DATA
+-- ===================================================================================
+-- Captures daily snapshots of business value metrics
+-- INTERVIEW NOTE: The CASE statement demonstrates data standardization techniques
+
+value_snapshot AS (
+    SELECT
+        *,
+        -- Standardize country codes to full country names for reporting
+        CASE
+            WHEN country_code = 'C1' THEN 'Country1'
+            WHEN country_code = 'C2' THEN 'Country2'
+            WHEN country_code = 'C3' THEN 'Country3'
+            WHEN country_code = 'C4' THEN 'Country4'
+            WHEN country_code = 'C5' THEN 'Country5'
+            ELSE country_code  -- Fallback to original code if not mapped
+        END AS country_name,
+        EXTRACT(YEAR FROM DATE(snapshot_date)) AS year,
+        DATE(snapshot_date) AS date,
+        EXTRACT(WEEK FROM DATE(snapshot_date)) AS week_number
+    FROM "database"."schema"."fact_daily_value"
+    WHERE snapshot_date > '2024-12-31 00:00:00'  -- Match date filter with volume data
+),
+
+-- ===================================================================================
+-- SECTION 5: VALUE DATA ENRICHMENT
+-- ===================================================================================
+-- Joins value snapshots with facility information for geographic analysis
+-- INTERVIEW NOTE: This enables analysis by country, region, and facility type
+
+value_enriched AS (
+    SELECT
+        v.country_code,
+        v.snapshot_date,
+        v.week_number,
+        v.year,
+        v.country_name,
+        v.total_value,      -- Business value metric (e.g., revenue, throughput value)
+        v.date,
+        f.facility_type,
+        f.region_code,
+        f.country,
+        f.hub_id
+    FROM value_snapshot v
+    LEFT JOIN facility_info f ON v.country_name = f.country
+    WHERE f.facility_type IS NOT NULL
+),
+
+-- ===================================================================================
+-- SECTION 6: AGGREGATED DATA
+-- ===================================================================================
+-- Combines volume and value data at the facility-week level
+-- INTERVIEW NOTE: AVG() is used here because multiple daily records may exist per week
+-- This could be changed to SUM() depending on business requirements
+
+aggregated_data AS (
+    SELECT
+        v.country_code,
+        ve.facility_id,
+        v.snapshot_date,
+        v.week_number,
+        v.year,
+        AVG(v.total_value) AS avg_value,      -- Average value across the period
+        v.date,
+        AVG(ve.volume_metric) AS avg_volume   -- Average volume across the period
+    FROM value_enriched v
+    LEFT JOIN volume_enriched ve 
+        ON v.country = ve.country 
+        AND v.week_number = ve.week_number    -- Join on matching week for time alignment
+    GROUP BY v.country_code, ve.facility_id, v.snapshot_date, v.week_number, v.year, v.date
+),
+
+-- ===================================================================================
+-- SECTION 7: PERFORMANCE METRICS
+-- ===================================================================================
+-- Extracts detailed performance metrics for each facility and process
+-- INTERVIEW NOTE: This demonstrates handling of time-series data with start/end times
+-- The DATE_DIFF function calculates duration in minutes
+
+performance_metrics AS (
+    SELECT
+        facility_id,
+        country,
+        facility_type,
+        process_name,       -- Specific process being measured
+        process_group,      -- Higher-level process grouping
+        EXTRACT(YEAR FROM DATE(start_time)) AS year,
+        DATE(start_time) AS start_date,
+        start_time,
+        end_time,
+        DATE_DIFF('minute', start_time, end_time) AS duration_minutes,  -- Calculate duration
+        EXTRACT(WEEK FROM DATE(start_time)) AS week_number,
+        -- Average hours for different performance dimensions
+        AVG(total_hours) AS total_hours,
+        AVG(metric_a_hours) AS metric_a_hours,  -- e.g., execution time
+        AVG(metric_b_hours) AS metric_b_hours,  -- e.g., complexity factor
+        AVG(metric_c_hours) AS metric_c_hours,  -- e.g., capacity constraint
+        AVG(metric_d_hours) AS metric_d_hours,  -- e.g., unallocated time
+        AVG(metric_e_hours) AS metric_e_hours   -- e.g., exception handling
+    FROM "database"."schema"."fact_performance"
+    WHERE DATE(start_time) > '2024-12-31'
+        AND facility_type IS NOT NULL
+    GROUP BY facility_id, country, facility_type, process_name, process_group,
+             start_time, end_time,
+             EXTRACT(YEAR FROM DATE(start_time)),
+             DATE(start_time), DATE(end_time),
+             EXTRACT(WEEK FROM DATE(start_time))
+),
+
+-- ===================================================================================
+-- SECTION 8: BASIS POINTS (BPS) CALCULATIONS
+-- ===================================================================================
+-- Converts performance hours into basis points for standardized comparison
+-- INTERVIEW NOTE: Basis points allow comparison across facilities of different sizes
+-- Formula: (hours / volume) * 10000 = basis points
+-- 1 basis point = 0.01% = 1/10000
+
+performance_bps AS (
+    SELECT
+        a.country_code,
+        a.facility_id,
+        a.snapshot_date,
+        a.week_number,
+        a.year,
+        a.date,
+        a.avg_value,
+        a.avg_volume,
+        -- Sum hours across all processes for each metric type
+        SUM(p.metric_a_hours) AS total_metric_a_hours,
+        SUM(p.metric_b_hours) AS total_metric_b_hours,
+        SUM(p.metric_c_hours) AS total_metric_c_hours,
+        SUM(p.metric_d_hours) AS total_metric_d_hours,
+        SUM(p.metric_e_hours) AS total_metric_e_hours,
+        -- Calculate basis points for each metric
+        -- INTERVIEW NOTE: CASE statement prevents division by zero errors
+        CASE
+            WHEN a.avg_volume > 0 THEN (SUM(p.metric_a_hours) / a.avg_volume) * 10000
+            ELSE 0
+        END AS metric_a_bps,
+        CASE
+            WHEN a.avg_volume > 0 THEN (SUM(p.metric_b_hours) / a.avg_volume) * 10000
+            ELSE 0
+        END AS metric_b_bps,
+        CASE
+            WHEN a.avg_volume > 0 THEN (SUM(p.metric_c_hours) / a.avg_volume) * 10000
+            ELSE 0
+        END AS metric_c_bps,
+        CASE
+            WHEN a.avg_volume > 0 THEN (SUM(p.metric_d_hours) / a.avg_volume) * 10000
+            ELSE 0
+        END AS metric_d_bps,
+        CASE
+            WHEN a.avg_volume > 0 THEN (SUM(p.metric_e_hours) / a.avg_volume) * 10000
+            ELSE 0
+        END AS metric_e_bps,
+        -- Calculate total basis points across all metrics
+        CASE
+            WHEN a.avg_volume > 0 THEN ((SUM(p.metric_a_hours) + SUM(p.metric_b_hours) + 
+                                         SUM(p.metric_c_hours) + SUM(p.metric_d_hours) + 
+                                         SUM(p.metric_e_hours)) / a.avg_volume) * 10000
+            ELSE 0
+        END AS total_bps
+    FROM aggregated_data a
+    LEFT JOIN performance_metrics p 
+        ON a.snapshot_date = p.start_date 
+        AND a.facility_id = p.facility_id 
+        AND a.week_number = p.week_number 
+        AND a.year = p.year
+    GROUP BY a.country_code, a.facility_id, a.snapshot_date, a.week_number, 
+             a.year, a.date, a.avg_value, a.avg_volume
+),
+
+-- ===================================================================================
+-- SECTION 9: QUALITY EVENTS
+-- ===================================================================================
+-- Tracks quality-related events (e.g., defects, delays, errors)
+-- INTERVIEW NOTE: INNER JOIN ensures we only include approved events
+-- This demonstrates data quality filtering at the query level
+
+quality_events AS (
+    SELECT
+        b.status,
+        a.facility_id,
+        DATE(a.event_date) AS event_date,
+        a.shift_id,         -- Shift during which event occurred
+        a.event_units,      -- Number of units affected
+        a.category,         -- Event category classification
+        a.root_cause,       -- Root cause analysis result
+        a.event_id,         -- Unique event identifier
+        EXTRACT(WEEK FROM DATE(a.event_date)) AS week_number,
+        EXTRACT(YEAR FROM DATE(a.event_date)) AS year
+    FROM "database"."schema"."fact_quality_events" AS a
+    INNER JOIN "database"."schema"."fact_event_status" AS b 
+        ON b.event_id = a.event_id
+    WHERE b.status = 'approved'  -- Only include verified/approved events
+        AND a.event_date >= '2024-12-31 00:00:00'
+    GROUP BY a.event_id, a.event_date, a.facility_id, b.status, 
+             a.category, a.root_cause, a.shift_id, a.event_units
+),
+
+-- ===================================================================================
+-- SECTION 10: QUALITY EVENTS AGGREGATION
+-- ===================================================================================
+-- Aggregates quality events to facility-date level for analysis
+-- INTERVIEW NOTE: This enables calculation of DPMO (Defects Per Million Opportunities)
+
+quality_events_agg AS (
+    SELECT
+        facility_id,
+        event_date AS date,
+        week_number,
+        year,
+        SUM(event_units) AS total_event_units  -- Total units affected by quality events
+    FROM quality_events
+    GROUP BY facility_id, event_date, week_number, year
+),
+
+-- ===================================================================================
+-- SECTION 11: SLA CONFIGURATION
+-- ===================================================================================
+-- Defines Service Level Agreement (SLA) targets for different process types
+-- INTERVIEW NOTE: This is a configuration table that could be externalized
+-- Hard-coded here for demonstration purposes
+
+sla_config AS (
+    SELECT 'FAC001' AS facility_id, 'ProcessA' AS process_type, 90 AS sla_minutes
+    UNION ALL SELECT 'FAC001', 'ProcessB', 120
+    UNION ALL SELECT 'FAC002', 'ProcessA', 90
+    UNION ALL SELECT 'FAC002', 'ProcessB', 120
+    UNION ALL SELECT 'FAC003', 'ProcessA', 95
+    UNION ALL SELECT 'FAC003', 'ProcessB', 120
+    -- INTERVIEW NOTE: In production, this would be a separate dimension table
+    -- Using UNION ALL for demonstration of facility-specific SLA targets
+),
+
+-- ===================================================================================
+-- SECTION 12: BUFFER EVENTS
+-- ===================================================================================
+-- Tracks events related to buffer management (capacity, timing, resource allocation)
+-- INTERVIEW NOTE: Buffer events represent operational inefficiencies or constraints
+
+buffer_events AS (
+    SELECT
+        o.facility_id,
+        o.process_path,         -- Specific process path affected
+        DATE(o.event_start) AS event_date,
+        o.event_start,
+        o.event_end,
+        o.event_family,         -- High-level event classification
+        o.event_cause,          -- Specific cause of the event
+        o.event_description,    -- Detailed description
+        AVG(o.minutes_affected/60) AS hours_affected,  -- Convert minutes to hours
+        EXTRACT(WEEK FROM DATE(o.event_start)) AS week_number,
+        EXTRACT(YEAR FROM DATE(o.event_start)) AS year,
+        f.facility_type,
+        f.region_code,
+        f.country,
+        f.hub_id
+    FROM "database"."schema"."fact_buffer_events" o
+    LEFT JOIN "database"."schema"."dim_facility" f 
+        ON o.facility_id = f.facility_id
+    WHERE f.hub_id IS NOT NULL
+        AND DATE(o.event_start) > '2024-12-31'
+    GROUP BY o.facility_id, o.process_path, DATE(o.event_start), o.event_start, o.event_end,
+             o.event_family, o.event_cause, o.event_description, 
+             f.facility_type, f.region_code, f.country, f.hub_id
+),
+
+-- ===================================================================================
+-- SECTION 13: BUFFER EVENTS AGGREGATION
+-- ===================================================================================
+-- Aggregates buffer events to facility-date level
+
+buffer_events_agg AS (
+    SELECT
+        facility_id,
+        event_date AS date,
+        week_number,
+        year,
+        region_code,
+        SUM(hours_affected) AS total_buffer_hours  -- Total hours lost to buffer events
+    FROM buffer_events
+    GROUP BY facility_id, event_date, week_number, year, region_code
+),
+
+-- ===================================================================================
+-- SECTION 14: COMBINED METRICS
+-- ===================================================================================
+-- Master CTE that combines all metrics into a single dataset
+-- INTERVIEW NOTE: FULL OUTER JOIN preserves all records from all sources
+-- COALESCE handles NULL values from the outer joins
+
+combined_metrics AS (
+    SELECT
+        COALESCE(pb.facility_id, ba.facility_id, qe.facility_id) AS facility_id,
+        COALESCE(pb.date, ba.date, qe.date) AS date,
+        COALESCE(pb.week_number, ba.week_number, qe.week_number) AS week_number,
+        COALESCE(pb.year, ba.year, qe.year) AS year,
+        COALESCE(pb.country_code, ba.region_code) AS region,
+        -- Performance metrics in basis points
+        pb.metric_a_bps,
+        pb.metric_b_bps,
+        pb.metric_c_bps,
+        pb.metric_d_bps,
+        pb.metric_e_bps,
+        pb.total_bps,
+        -- Cost metrics in hours
+        ba.total_buffer_hours,
+        -- Quality metrics in units
+        qe.total_event_units
+    FROM performance_bps pb
+    FULL OUTER JOIN buffer_events_agg ba 
+        ON pb.facility_id = ba.facility_id 
+        AND pb.date = ba.date 
+        AND pb.week_number = ba.week_number 
+        AND pb.year = ba.year
+    FULL OUTER JOIN quality_events_agg qe 
+        ON COALESCE(pb.facility_id, ba.facility_id) = qe.facility_id 
+        AND COALESCE(pb.date, ba.date) = qe.date 
+        AND COALESCE(pb.week_number, ba.week_number) = qe.week_number 
+        AND COALESCE(pb.year, ba.year) = qe.year
+)
+
+-- ===================================================================================
+-- SECTION 15: FINAL PIVOT TABLE OUTPUT
+-- ===================================================================================
+-- Creates the final pivot table structure with hierarchical organization
+-- INTERVIEW NOTE: This structure enables flexible reporting and visualization
+-- The ROW_NUMBER() function provides a unique identifier for each row
+-- The ORDER BY in the window function determines the sort order
+
+SELECT
+    ROW_NUMBER() OVER (
+        ORDER BY category_order, subcategory_order, metric_order, 
+                 date, facility_id, process_type
+    ) AS row_num,  -- Unique row identifier for the pivot table
+    category,      -- Top-level grouping (e.g., Output)
+    subcategory,   -- Second-level grouping (e.g., Speed, Quality, Cost)
+    metric,        -- Specific metric name
+    unit,          -- Unit of measurement (bps, hours, DPMO, mins, %)
+    date,          -- Date of the metric
+    week_number,   -- Week number for weekly aggregations
+    year,          -- Year for annual aggregations
+    region,        -- Geographic region
+    facility_id,   -- Facility identifier
+    process_type,  -- Process type (for SLA metrics)
+    metric_value   -- The actual metric value
+FROM (
+    -- ===================================================================================
+    -- CATEGORY 1: OUTPUT > SUBCATEGORY 1: SPEED > PERFORMANCE METRICS (BPS)
+    -- ===================================================================================
+    -- These metrics measure operational speed/efficiency in basis points
+    -- Lower bps values indicate better performance (less time per unit)
+    
+    SELECT
+        1 AS category_order,      -- Determines sort order in final output
+        1 AS subcategory_order,
+        1 AS metric_order,
+        'Output' AS category,
+        'Speed' AS subcategory,
+        'Performance Metric A' AS metric,  -- e.g., Execution efficiency
+        'bps' AS unit,
+        date,
+        week_number,
+        year,
+        region,
+        facility_id,
+        NULL AS process_type,  -- Not applicable for this metric type
+        metric_a_bps AS metric_value
+    FROM combined_metrics
+    WHERE metric_a_bps IS NOT NULL  -- Only include rows with actual values
+
+    UNION ALL
+
+    SELECT
+        1, 1, 2,
+        'Output', 'Speed', 'Performance Metric B', 'bps',  -- e.g., Complexity factor
+        date, week_number, year, region, facility_id, NULL,
+        metric_b_bps
+    FROM combined_metrics
+    WHERE metric_b_bps IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 1, 3,
+        'Output', 'Speed', 'Performance Metric C', 'bps',  -- e.g., Capacity utilization
+        date, week_number, year, region, facility_id, NULL,
+        metric_c_bps
+    FROM combined_metrics
+    WHERE metric_c_bps IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 1, 4,
+        'Output', 'Speed', 'Performance Metric D', 'bps',  -- e.g., Exception handling
+        date, week_number, year, region, facility_id, NULL,
+        metric_d_bps
+    FROM combined_metrics
+    WHERE metric_d_bps IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 1, 5,
+        'Output', 'Speed', 'Performance Metric E', 'bps',  -- e.g., Unallocated time
+        date, week_number, year, region, facility_id, NULL,
+        metric_e_bps
+    FROM combined_metrics
+    WHERE metric_e_bps IS NOT NULL
+
+    UNION ALL
+
+    -- ===================================================================================
+    -- CATEGORY 1: OUTPUT > SUBCATEGORY 2: SPEED > SLA TARGETS (MINUTES)
+    -- ===================================================================================
+    -- Service Level Agreement targets for different process types
+    -- These represent target completion times for specific processes
+    
+    SELECT
+        1, 2, 1,
+        'Output', 'Speed', 'SLA - ' || sla.process_type, 'mins',
+        cm.date, cm.week_number, cm.year, cm.region, cm.facility_id, 
+        sla.process_type,  -- Process type is relevant here
+        sla.sla_minutes
+    FROM combined_metrics cm
+    INNER JOIN sla_config sla ON cm.facility_id = sla.facility_id
+    -- INTERVIEW NOTE: This creates one row per facility-date-process combination
+    -- Allows comparison of actual performance against SLA targets
+
+    UNION ALL
+
+    -- ===================================================================================
+    -- CATEGORY 1: OUTPUT > SUBCATEGORY 3: QUALITY > QUALITY EVENTS (DPMO)
+    -- ===================================================================================
+    -- Quality metrics measured in DPMO (Defects Per Million Opportunities)
+    -- Lower values indicate better quality performance
+    
+    SELECT
+        1, 3, 1,
+        'Output', 'Quality', 'Quality Events', 'DPMO',
+        date, week_number, year, region, facility_id, NULL,
+        total_event_units
+    FROM combined_metrics
+    WHERE total_event_units IS NOT NULL
+
+    UNION ALL
+
+    -- ===================================================================================
+    -- CATEGORY 1: OUTPUT > SUBCATEGORY 4: COST > RESOURCE HOURS
+    -- ===================================================================================
+    -- Cost metrics measured in hours
+    -- These represent various types of resource consumption or inefficiency
+    -- INTERVIEW NOTE: All six metrics use the same source (total_buffer_hours)
+    -- In production, these would likely come from different calculations
+    
+    SELECT
+        1, 4, 1,
+        'Output', 'Cost', 'Resource Hours Type 1', 'hours',  -- e.g., Out of window time
+        date, week_number, year, region, facility_id, NULL,
+        total_buffer_hours
+    FROM combined_metrics
+    WHERE total_buffer_hours IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 4, 2,
+        'Output', 'Cost', 'Resource Hours Type 2', 'hours',  -- e.g., Rate degradation
+        date, week_number, year, region, facility_id, NULL,
+        total_buffer_hours
+    FROM combined_metrics
+    WHERE total_buffer_hours IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 4, 3,
+        'Output', 'Cost', 'Resource Hours Type 3', 'hours',  -- e.g., Overstaffing
+        date, week_number, year, region, facility_id, NULL,
+        total_buffer_hours
+    FROM combined_metrics
+    WHERE total_buffer_hours IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 4, 4,
+        'Output', 'Cost', 'Buffer Management', '%',  -- Buffer efficiency percentage
+        date, week_number, year, region, facility_id, NULL,
+        total_buffer_hours
+    FROM combined_metrics
+    WHERE total_buffer_hours IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 4, 5,
+        'Output', 'Cost', 'Resource Hours Type 4', 'hours',  -- e.g., Process degradation
+        date, week_number, year, region, facility_id, NULL,
+        total_buffer_hours
+    FROM combined_metrics
+    WHERE total_buffer_hours IS NOT NULL
+
+    UNION ALL
+
+    SELECT
+        1, 4, 6,
+        'Output', 'Cost', 'Resource Hours Type 5', 'hours',  -- e.g., Management defects
+        date, week_number, year, region, facility_id, NULL,
+        total_buffer_hours
+    FROM combined_metrics
+    WHERE total_buffer_hours IS NOT NULL
+
+) AS pivoted_data
+ORDER BY date, week_number, facility_id, category_order, subcategory_order, metric_order, process_type;
+
+/*
+===================================================================================
+QUERY OPTIMIZATION NOTES FOR INTERVIEWS:
+===================================================================================
+
+1. INDEXING STRATEGY:
+   - Create indexes on: facility_id, date, week_number, year
+   - Composite index on (facility_id, date) for join performance
+   - Consider partitioning large fact tables by date
+
+2. PERFORMANCE CONSIDERATIONS:
+   - CTEs are materialized once and reused (in most modern SQL engines)
+   - FULL OUTER JOINs can be expensive; consider if all are necessary
+   - WHERE clauses filter early to reduce data volume
+   - GROUP BY operations are optimized by pre-filtering
+
+3. SCALABILITY:
+   - Date range filtering prevents full table scans
+   - Aggregations at appropriate levels (daily, weekly)
+   - Could be further optimized with materialized views for historical data
+
+4. MAINTAINABILITY:
+   - Modular CTE structure makes debugging easier
+   - Clear naming conventions improve readability
+   - Comments explain business logic
+   - Easy to add new metrics by extending the final UNION ALL
+
+5. BUSINESS VALUE:
+   - Provides comprehensive operational visibility
+   - Enables trend analysis and performance comparison
+   - Supports data-driven decision making
+   - Flexible structure accommodates various reporting needs
+
+===================================================================================
+*/
+
