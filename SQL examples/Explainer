@@ -1,0 +1,57 @@
+# SQL Query Templates
+
+This collection contains 5 SQL query templates for common analytical use cases in operations and performance management.
+
+## Template Files
+
+1. **sql_template_1_multi_metric_dashboard.sql** - Multi-metric performance dashboard
+2. **sql_template_2_cost_analysis.sql** - Cost analysis and budget variance tracking
+3. **sql_template_3_operational_metrics.sql** - Operational metrics and facility performance
+4. **sql_template_4_cancellation_analysis.sql** - Order cancellation analysis with DPMO calculations
+5. **sql_template_5_performance_tracking.sql** - Performance tracking with trend analysis
+
+## Usage Instructions
+
+### Before Using These Templates:
+
+1. **Replace Database Names**: Update all database/schema references (e.g., `warehouse_db`, `performance_db`) with your actual database names
+2. **Replace Table Names**: Update table names (e.g., `fact_daily_performance`, `dim_facilities`) with your actual table names
+3. **Replace Column Names**: Update column names (e.g., `facility_id`, `region_code`) with your actual column names
+4. **Adjust Date Filters**: Modify date ranges in WHERE clauses to match your analysis period
+5. **Customize Metrics**: Add or remove metrics based on your specific requirements
+
+### Common Patterns Used:
+
+- **CTEs (Common Table Expressions)** for modular query building
+- **Window Functions** for trend analysis and moving averages
+- **CASE WHEN** statements for conditional logic and metric categorization
+- **Basis Points (BPS)** calculations for performance metrics (multiply by 10,000)
+- **DPMO (Defects Per Million Opportunities)** calculations for quality metrics
+- **Week-over-week change** calculations for trend analysis
+
+### Key Features:
+
+- **Null Handling**: Uses COALESCE() and NULLIF() functions to handle null values safely
+- **Data Type Casting**: Explicit casting for calculations (e.g., ::DECIMAL, ::INTEGER)
+- **Date Manipulation**: Week calculations, year extraction, and date truncation
+- **Aggregation Levels**: Support for both daily and weekly reporting
+- **Performance Flags**: Automatic flagging of performance thresholds
+
+### Customization Tips:
+
+- Modify metric thresholds in CASE statements to match your business rules
+- Add additional performance categories as needed
+- Adjust moving average windows (currently 7-day) based on your requirements
+- Include additional facility attributes from your dimension tables
+- Extend trend analysis with month-over-month or year-over-year comparisons
+
+### Performance Considerations:
+
+- Add appropriate indexes on date columns and facility identifiers
+- Consider partitioning large fact tables by date
+- Use materialized views for frequently accessed aggregations
+- Optimize joins by ensuring proper foreign key relationships
+
+## Support
+
+For questions or customizations, review the comments within each template file for specific guidance on each CTE and calculation.
