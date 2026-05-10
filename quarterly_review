@@ -1,0 +1,514 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "intro",
+   "metadata": {},
+   "source": [
+    "# Quarterly Business Review Analysis\n",
+    "\n",
+    "This notebook demonstrates quarterly performance analysis using multiple datasets:\n",
+    "- Late delivery metrics\n",
+    "- Out-of-bounds rate calculations\n",
+    "- Task completion metrics\n",
+    "\n",
+    "**Note**: All data has been anonymized for demonstration purposes."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a9c76165",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np \n",
+    "import pandas as pd \n",
+    "import seaborn as sns\n",
+    "import datetime as dt\n",
+    "import matplotlib.pyplot as plt\n",
+    "import plotly.express as px"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "data_loading",
+   "metadata": {},
+   "source": [
+    "## Data Loading\n",
+    "Loading performance metrics from multiple data sources"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f57d4cbd",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Load sample datasets\n",
+    "late_delivery_metrics = pd.read_csv('late_delivery_sample.csv')\n",
+    "outbound_metrics = pd.read_csv('outbound_sample.csv')\n",
+    "outbound_percentages = pd.read_csv('outbound_perc_sample.csv')\n",
+    "task_metrics = pd.read_csv('task_sample.csv')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f0a8d817",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "late_delivery_metrics.head(10)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "date_processing",
+   "metadata": {},
+   "source": [
+    "## Date Processing\n",
+    "Converting date columns and creating time-based grouping variables"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "251d841b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Clean and convert date column\n",
+    "late_delivery_metrics['balance_date'] = late_delivery_metrics['balance_date'].str.rstrip(\"T00:00:00.000Z\")\n",
+    "late_delivery_metrics['balance_date'] = pd.to_datetime(late_delivery_metrics['balance_date'])\n",
+    "\n",
+    "# Create time grouping variables\n",
+    "late_delivery_metrics['week_number'] = late_delivery_metrics['balance_date'].dt.strftime('%Y-W%V')\n",
+    "late_delivery_metrics['month'] = late_delivery_metrics['balance_date'].dt.strftime('%Y-%m')\n",
+    "late_delivery_metrics['quarter'] = late_delivery_metrics['balance_date'].dt.to_period('Q').dt.strftime('%Y-Q%q')\n",
+    "late_delivery_metrics['year'] = late_delivery_metrics['balance_date'].dt.strftime('%Y')\n",
+    "\n",
+    "late_delivery_metrics.head(10)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "39e927bb",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "outbound_metrics.head(10)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "70ebbbdc",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Process outbound metrics dates\n",
+    "outbound_metrics['clean_date'] = outbound_metrics['clean_date'].str.rstrip(\"T00:00:00.000Z\")\n",
+    "outbound_metrics['clean_date'] = pd.to_datetime(outbound_metrics['clean_date'])\n",
+    "\n",
+    "outbound_metrics['week_number'] = outbound_metrics['clean_date'].dt.strftime('%Y-W%V')\n",
+    "outbound_metrics['month'] = outbound_metrics['clean_date'].dt.strftime('%Y-%m')\n",
+    "outbound_metrics['quarter'] = outbound_metrics['clean_date'].dt.to_period('Q').dt.strftime('%Y-Q%q')\n",
+    "outbound_metrics['year_name'] = outbound_metrics['clean_date'].dt.strftime('%Y')\n",
+    "\n",
+    "outbound_metrics.head(50)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "30668b4c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "task_metrics.head(10)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "802e89da",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Process task metrics dates\n",
+    "task_metrics['date'] = pd.to_datetime(task_metrics['date'])\n",
+    "\n",
+    "task_metrics['week_number'] = task_metrics['date'].dt.strftime('%Y-W%V')\n",
+    "task_metrics['month'] = task_metrics['date'].dt.strftime('%Y-%m')\n",
+    "task_metrics['quarter'] = task_metrics['date'].dt.to_period('Q').dt.strftime('%Y-Q%q')\n",
+    "task_metrics['year'] = task_metrics['date'].dt.strftime('%Y')\n",
+    "\n",
+    "task_metrics.head(10)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "metric_calculation",
+   "metadata": {},
+   "source": [
+    "## Metric Calculations\n",
+    "Creating composite performance indicators"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a73296bf",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Calculate total performance score from individual components\n",
+    "task_metrics['total_score'] = (\n",
+    "    task_metrics['execution_score'] + \n",
+    "    task_metrics['compliance_score'] + \n",
+    "    task_metrics['event_score'] + \n",
+    "    task_metrics['capacity_score'] + \n",
+    "    task_metrics['uncategorized_score'] + \n",
+    "    task_metrics['accuracy_score'] + \n",
+    "    task_metrics['workload_score'] + \n",
+    "    task_metrics['planning_score']\n",
+    ")\n",
+    "task_metrics.head(10)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "data_filtering",
+   "metadata": {},
+   "source": [
+    "## Q1 Data Filtering\n",
+    "Focusing on Q1 comparison between current and previous year"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4e280614",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Filter for Q1 comparison (current vs previous year)\n",
+    "task_q1 = task_metrics[task_metrics['quarter'].isin(['2025-Q1', '2026-Q1'])]\n",
+    "task_q1"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a5844117",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "late_delivery_q1 = late_delivery_metrics[late_delivery_metrics['quarter'].isin(['2025-Q1', '2026-Q1'])]\n",
+    "outbound_q1 = outbound_metrics[outbound_metrics['quarter'].isin(['2025-Q1', '2026-Q1'])]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "data_aggregation",
+   "metadata": {},
+   "source": [
+    "## Data Aggregation\n",
+    "Creating summary statistics by facility and time period"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "32df9f01",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Aggregate late delivery metrics by facility and time period\n",
+    "late_delivery_q1_summary = late_delivery_q1.groupby([\n",
+    "    \"facility_code\", \"balance_date\", \"week_number\", \"month\", \"quarter\", \"year\"\n",
+    "]).agg({\n",
+    "    'defect_rate': 'sum',\n",
+    "    'raw_late_count': 'sum'\n",
+    "}).reset_index().round(3)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "b26f7a28",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "outbound_q1"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2ee96564",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Aggregate outbound metrics\n",
+    "outbound_q1_summary = outbound_q1.groupby([\n",
+    "    \"facility_code\", \"process_path\", \"category\", \"clean_date\", \n",
+    "    \"week_number\", \"month\", \"quarter\", \"year\"\n",
+    "]).agg({\n",
+    "    'performance_score': 'sum',\n",
+    "    'weekly_percentage': 'mean'\n",
+    "}).reset_index().round(3)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "090dd31e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Aggregate task metrics\n",
+    "task_q1_summary = task_q1.groupby([\n",
+    "    \"warehouse_id\", \"date\", \"process_group\", \"week_number\", \"month\", \"quarter\", \"year\"\n",
+    "]).agg({\n",
+    "    'total_units': 'sum',\n",
+    "    'execution_score': 'sum',\n",
+    "    'compliance_score': 'sum',\n",
+    "    'event_score': 'sum',\n",
+    "    'capacity_score': 'sum',\n",
+    "    'uncategorized_score': 'sum',\n",
+    "    'accuracy_score': 'sum',\n",
+    "    'workload_score': 'sum',\n",
+    "    'planning_score': 'sum',\n",
+    "    'total_score': 'sum'\n",
+    "}).reset_index().round(3)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e7cb8e6b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "task_q1_summary"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "visualizations",
+   "metadata": {},
+   "source": [
+    "## Performance Visualizations\n",
+    "Creating comparative charts for quarterly business review"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "b65a0cd8",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Task Performance by Warehouse and Quarter\n",
+    "plt.figure(figsize=(20, 5))\n",
+    "ax = sns.barplot(x='warehouse_id', y='total_score', hue='quarter', data=task_q1_summary, errorbar=None)\n",
+    "plt.xlabel(\"Warehouse ID\")\n",
+    "plt.ylabel(\"Total Performance Score\")\n",
+    "plt.title(\"Task Performance by Warehouse and Quarter\")\n",
+    "plt.xticks(rotation=45, fontsize=8)\n",
+    "plt.legend(title=\"Quarter\")\n",
+    "\n",
+    "# Add value labels on top of each bar\n",
+    "for container in ax.containers:\n",
+    "    ax.bar_label(container, fmt='%.2f', fontsize=8, padding=3)\n",
+    "\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0267dc81",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "late_delivery_q1_summary"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "20ba6aca",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Late Delivery Metrics by Warehouse and Quarter\n",
+    "plt.figure(figsize=(20, 5))\n",
+    "ax = sns.barplot(x='facility_code', y='raw_late_count', hue='quarter', data=late_delivery_q1_summary, errorbar=None)\n",
+    "plt.xlabel(\"Facility Code\")\n",
+    "plt.ylabel(\"Units\")\n",
+    "plt.title(\"Late Delivery Count by Facility and Quarter\")\n",
+    "plt.xticks(rotation=45, fontsize=8)\n",
+    "plt.legend(title=\"Quarter\")\n",
+    "\n",
+    "# Add value labels on top of each bar\n",
+    "for container in ax.containers:\n",
+    "    ax.bar_label(container, fmt='%.2f', fontsize=8, padding=3)\n",
+    "\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d56390f4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "outbound_q1_summary"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0bf6b627",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Outbound Performance by Facility and Quarter\n",
+    "plt.figure(figsize=(20, 5))\n",
+    "ax = sns.barplot(x='facility_code', y='performance_score', hue='quarter', data=outbound_q1_summary, errorbar=None)\n",
+    "plt.xlabel(\"Facility Code\")\n",
+    "plt.ylabel(\"Performance Score\")\n",
+    "plt.title(\"Outbound Performance by Facility and Quarter\")\n",
+    "plt.xticks(rotation=45, fontsize=8)\n",
+    "plt.legend(title=\"Quarter\")\n",
+    "\n",
+    "# Add value labels on top of each bar\n",
+    "for container in ax.containers:\n",
+    "    ax.bar_label(container, fmt='%.2f', fontsize=8, padding=3)\n",
+    "\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "facility_focus",
+   "metadata": {},
+   "source": [
+    "## Facility-Specific Analysis\n",
+    "Deep dive into a specific facility's performance"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "610ec05a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Filter data for specific facility analysis (using DEMO1 as example)\n",
+    "demo_late_delivery = late_delivery_q1_summary[late_delivery_q1_summary['facility_code'].isin(['DEMO1'])]\n",
+    "demo_outbound = outbound_q1_summary[outbound_q1_summary['facility_code'].isin(['DEMO1'])]\n",
+    "demo_tasks = task_q1_summary[task_q1_summary['warehouse_id'].isin(['DEMO1'])]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2939fd8b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "demo_late_delivery"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "7448077e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "demo_outbound"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "48a3d2bf",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "demo_tasks"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "sample_data_note",
+   "metadata": {},
+   "source": [
+    "## Sample Data Generation\n",
+    "\n",
+    "To run this notebook with your own data, create CSV files with the following structure:\n",
+    "\n",
+    "**late_delivery_sample.csv:**\n",
+    "- facility_code: Facility identifier\n",
+    "- balance_date: Date in YYYY-MM-DDTHH:MM:SS.sssZ format\n",
+    "- defect_rate: Numeric defect rate\n",
+    "- raw_late_count: Count of late deliveries\n",
+    "\n",
+    "**outbound_sample.csv:**\n",
+    "- facility_code: Facility identifier\n",
+    "- process_path: Process category\n",
+    "- category: Performance category\n",
+    "- clean_date: Date in YYYY-MM-DDTHH:MM:SS.sssZ format\n",
+    "- performance_score: Numeric performance score\n",
+    "- weekly_percentage: Weekly percentage metric\n",
+    "\n",
+    "**task_sample.csv:**\n",
+    "- warehouse_id: Warehouse identifier\n",
+    "- date: Date in YYYY-MM-DD format\n",
+    "- process_group: Process group category\n",
+    "- total_units: Total units processed\n",
+    "- execution_score, compliance_score, event_score, etc.: Individual performance metrics\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6c29abd4",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.8.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
